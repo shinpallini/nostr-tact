@@ -2,59 +2,48 @@ package main
 
 import (
 	"fmt"
-	"os"
+	"strings"
+	"time"
 
+	"github.com/mattn/go-runewidth"
 	"github.com/rivo/tview"
-	"github.com/urfave/cli/v2"
 )
 
 func main() {
-	app := &cli.App{
-		Name:  "nostrtact",
-		Usage: "This is a TUI-based Nostr client.",
-		Commands: []*cli.Command{
-			{
-				Name:  "start",
-				Usage: "start nostr-tact client",
-				Action: func(*cli.Context) error {
-					tuiApp := tview.NewApplication()
-					commands := tview.NewList().
-						AddItem("List item 1", "Some explanatory text", 'a', nil).
-						AddItem("List item 2", "Some explanatory text", 'b', nil).
-						AddItem("List item 3", "Some explanatory text", 'c', nil).
-						AddItem("List item 4", "Some explanatory text", 'd', nil).
-						AddItem("Quit", "Press to exit", 'q', func() {
-							tuiApp.Stop()
-						})
-					commands.SetBorder(true)
-					commands.SetTitle("Commands")
-					// list.SetBorder(true)
-					// list.SetTitle("Commands")
-					timeline := tview.NewFlex().
-						AddItem(tview.NewBox().SetBorder(true).SetTitle("Timeline"), 0, 1, false)
-					footer := tview.NewTextView().
-						SetDynamicColors(true).
-						SetRegions(true).
-						SetTextAlign(tview.AlignCenter)
-					fmt.Fprintf(footer, "footer")
-					center := tview.NewFlex().SetDirection(tview.FlexColumn).
-						AddItem(commands, 0, 1, true).
-						AddItem(timeline, 0, 2, false)
-					footer.SetBorder(true)
-					flex := tview.NewFlex().SetDirection(tview.FlexRow).
-						AddItem(center, 0, 1, true).
-						AddItem(footer, 3, 1, false)
-					if err := tuiApp.SetRoot(flex, true).SetFocus(commands).Run(); err != nil {
-						return err
-					}
-					return nil
-				},
-			},
-		},
-		DefaultCommand: "start",
-	}
-	if err := app.Run(os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	app := tview.NewApplication()
+
+	// 名前、メッセージ、時刻用のTextViewを作成
+	nameView := tview.NewTextView().SetDynamicColors(true)
+	messageView := tview.NewTextView().SetDynamicColors(true)
+	timeView := tview.NewTextView().SetDynamicColors(true)
+
+	// レイアウト用のFlexを作成し、3つのTextViewを追加
+	flex := tview.NewFlex().
+		AddItem(nameView, 0, 1, false).
+		AddItem(messageView, 0, 2, false).
+		AddItem(timeView, 0, 1, false)
+
+	go func() {
+		for i := 0; ; i++ {
+			time.Sleep(1 * time.Second)
+			app.QueueUpdateDraw(func() {
+				// 現在のテキストを取得
+				nameText := nameView.GetText(true)
+				messageText := messageView.GetText(true)
+				timeText := timeView.GetText(true)
+
+				newText := runewidth.Wrap(fmt.Sprintf("あああああああああああ %d", i), 20)
+				paddingLines := strings.Repeat("\n", len(strings.Split(newText, "\n"))-1)
+
+				// 新しいテキストを設定
+				nameView.SetText(fmt.Sprintf("Name %d\n%s%s", i, paddingLines, nameText))
+				messageView.SetText(fmt.Sprintf("%s\n%s", newText, messageText))
+				timeView.SetText(fmt.Sprintf("%s\n%s%s", time.Now().Format("15:04:05"), paddingLines, timeText))
+			})
+		}
+	}()
+
+	if err := app.SetRoot(flex, true).Run(); err != nil {
+		panic(err)
 	}
 }
