@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mattn/go-runewidth"
@@ -42,39 +41,39 @@ func main() {
 		panic(err)
 	}
 
-	userNames := func() map[string]string {
-		m := make(map[string]string)
-		filters := []nostr.Filter{{
-			Kinds: []int{nostr.KindProfileMetadata},
-			Limit: 10000,
-		}}
-		sub, err := relay.Subscribe(ctx, filters)
-		if err != nil {
-			panic(err)
-		}
-		for {
-			select {
-			case ev := <-sub.Events:
-				var content metadataContent
-				err = json.Unmarshal([]byte(ev.Content), &content)
-				if err != nil {
-					// panic(err)
-					continue
-				}
-				m[ev.PubKey] = content.DispalyName
-			case <-time.After(2 * time.Second):
-				return m
-			case <-ctx.Done():
-				return m
-			}
-		}
-	}()
-	f, err := os.Create("length.txt")
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "user count: %d", len(userNames))
+	// userNames := func() map[string]string {
+	// 	m := make(map[string]string)
+	// 	filters := []nostr.Filter{{
+	// 		Kinds: []int{nostr.KindProfileMetadata},
+	// 		Limit: 10000,
+	// 	}}
+	// 	sub, err := relay.Subscribe(ctx, filters)
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+	// 	for {
+	// 		select {
+	// 		case ev := <-sub.Events:
+	// 			var content metadataContent
+	// 			err = json.Unmarshal([]byte(ev.Content), &content)
+	// 			if err != nil {
+	// 				// panic(err)
+	// 				continue
+	// 			}
+	// 			m[ev.PubKey] = content.DispalyName
+	// 		case <-time.After(2 * time.Second):
+	// 			return m
+	// 		case <-ctx.Done():
+	// 			return m
+	// 		}
+	// 	}
+	// }()
+	// f, err := os.Create("length.txt")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// defer f.Close()
+	// fmt.Fprintf(f, "user count: %d", len(userNames))
 
 	// 名前、メッセージ、時刻用のTextViewを作成
 	nameView := tview.NewTextView().SetDynamicColors(true)
@@ -87,7 +86,7 @@ func main() {
 		AddItem(messageView, 0, 4, false).
 		AddItem(timeView, 0, 2, false)
 
-	var mu sync.Mutex
+	// var mu sync.Mutex
 	go func(ctx context.Context) {
 		for ev := range sub.Events {
 			select {
@@ -96,17 +95,17 @@ func main() {
 			default:
 				app.QueueUpdateDraw(func() {
 					// 現在のテキストを取得
-					nameText := nameView.GetText(true)
-					messageText := messageView.GetText(true)
-					timeText := timeView.GetText(true)
+					nameText := truncate(nameView.GetText(true))
+					messageText := truncate(messageView.GetText(true))
+					timeText := truncate(timeView.GetText(true))
 
-					newText := runewidth.Wrap(fmt.Sprintf(ev.Content), 77)
+					newText := runewidth.Wrap(fmt.Sprintf(ev.Content), 70)
 					paddingLines := strings.Repeat("\n", len(strings.Split(newText, "\n"))-1)
 
 					// 新しいテキストを設定
-					mu.Lock()
-					nameView.SetText(fmt.Sprintf("%s\n%s%s", userNames[ev.PubKey], paddingLines, nameText))
-					mu.Unlock()
+					// mu.Lock()
+					nameView.SetText(fmt.Sprintf("%s\n%s%s", getName(ctx, relay, ev.PubKey), paddingLines, nameText))
+					// mu.Unlock()
 					messageView.SetText(fmt.Sprintf("%s\n%s", newText, messageText))
 					timeView.SetText(fmt.Sprintf("%s\n%s%s", ev.CreatedAt.Time(), paddingLines, timeText))
 					// time.Sleep(1 * time.Second)
@@ -120,10 +119,34 @@ func main() {
 	}
 }
 
-// func getMetadata() map[string]string {
-// 	filters := []nostr.Filter{{
-// 		Kinds: []int{nostr.KindProfileMetadata},
-// 		Limit: 1,
-// 	}}
+func getName(ctx context.Context, relay *nostr.Relay, pubKey string) string {
+	filters := []nostr.Filter{{
+		Kinds:   []int{nostr.KindProfileMetadata},
+		Authors: []string{pubKey},
+		Limit:   1,
+	}}
+	sub, err := relay.Subscribe(ctx, filters)
+	if err != nil {
+		panic(err)
+	}
+	select {
+	case ev := <-sub.Events:
+		var content metadataContent
+		err = json.Unmarshal([]byte(ev.Content), &content)
+		if err != nil {
+			panic(err)
+		}
+		return content.DispalyName
+	case <-ctx.Done():
+		return ""
+	case <-time.After(2 * time.Second):
+		return ""
+	}
+}
 
-// }
+func truncate(s string) string {
+	if len(s) > 1001 {
+		return s[:1000]
+	}
+	return s
+}
