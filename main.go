@@ -82,7 +82,7 @@ func main() {
 	nameView := tview.NewTextView().SetDynamicColors(true)
 	messageView := tview.NewTextView().SetDynamicColors(true)
 	timeView := tview.NewTextView().SetDynamicColors(true)
-	picture := tview.NewImage()
+	imageView := tview.NewImage()
 	resp, err := http.Get("https://pomf2.lain.la/f/989dxs36.jpg")
 	if err != nil {
 		panic(err)
@@ -92,14 +92,14 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	picture.SetImage(photo)
+	imageView.SetImage(photo)
 
 	// レイアウト用のFlexを作成し、3つのTextViewを追加
 	flex := tview.NewFlex().
 		AddItem(nameView, 0, 1, false).
 		AddItem(messageView, 0, 4, false).
 		AddItem(timeView, 0, 2, false).
-		AddItem(picture, 0, 1, false)
+		AddItem(imageView, 0, 1, false)
 
 	// var mu sync.Mutex
 	go func(ctx context.Context) {
