@@ -3,165 +3,137 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"image"
 	"image/jpeg"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mattn/go-runewidth"
-	"github.com/nbd-wtf/go-nostr"
+	"github.com/nbd-wtf/go-nostr/nip19"
 	"github.com/rivo/tview"
 )
 
-type metadataContent struct {
-	Name        string `json:"name"`
-	DispalyName string `json:"display_name"`
+const (
+	cfgname = "config.json"
+)
+
+type Config struct {
+	Relays       []string `json:"relays"`
+	PublicKey    string   `json:"publickey"`
+	HexPublicKey string
+}
+
+func (c *Config) UnmarshalJSON(b []byte) error {
+	type alias Config
+	var cfg alias
+	err := json.Unmarshal(b, &cfg)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(cfg.PublicKey, "npub") {
+		_, v, err := nip19.Decode(cfg.PublicKey)
+		if err != nil {
+			return err
+		}
+		cfg.HexPublicKey = v.(string)
+	}
+	*c = Config(cfg)
+	return nil
+}
+
+type Profile struct {
+	Website     string `json:"website"`
+	Nip05       string `json:"nip05"`
 	Picture     string `json:"picture"`
+	Lud16       string `json:"lud16"`
+	DisplayName string `json:"display_name"`
+	About       string `json:"about"`
+	Name        string `json:"name"`
 }
 
 func main() {
-	// sk := nostr.GeneratePrivateKey()
-	// pk, _ := nostr.GetPublicKey(sk)
+	// load config
+	f, err := os.Open(cfgname)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	var cfg Config
+	err = json.NewDecoder(f).Decode(&cfg)
+	if err != nil {
+		panic(err)
+	}
+	_ = cfg
+
+	// build tui application
 	app := tview.NewApplication()
+	mainView := tview.NewFlex().SetDirection(tview.FlexRow)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-
-	// リレーサーバーの設定
-	relay, err := nostr.RelayConnect(ctx, "wss://relay-jp.nostr.wirednet.jp")
-	if err != nil {
-		panic(err)
-	}
-	filters := []nostr.Filter{{
-		Kinds: []int{nostr.KindTextNote},
-		Limit: 1,
-	}}
-
-	sub, err := relay.Subscribe(ctx, filters)
-	if err != nil {
-		panic(err)
-	}
-
-	// userNames := func() map[string]string {
-	// 	m := make(map[string]string)
-	// 	filters := []nostr.Filter{{
-	// 		Kinds: []int{nostr.KindProfileMetadata},
-	// 		Limit: 10000,
-	// 	}}
-	// 	sub, err := relay.Subscribe(ctx, filters)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	for {
-	// 		select {
-	// 		case ev := <-sub.Events:
-	// 			var content metadataContent
-	// 			err = json.Unmarshal([]byte(ev.Content), &content)
-	// 			if err != nil {
-	// 				// panic(err)
-	// 				continue
-	// 			}
-	// 			m[ev.PubKey] = content.DispalyName
-	// 		case <-time.After(2 * time.Second):
-	// 			return m
-	// 		case <-ctx.Done():
-	// 			return m
-	// 		}
-	// 	}
-	// }()
-	// f, err := os.Create("length.txt")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer f.Close()
-	// fmt.Fprintf(f, "user count: %d", len(userNames))
-
-	// 名前、メッセージ、時刻用のTextViewを作成
-	nameView := tview.NewTextView().SetDynamicColors(true)
-	messageView := tview.NewTextView().SetDynamicColors(true)
-	timeView := tview.NewTextView().SetDynamicColors(true)
-	imageView := tview.NewImage()
-	resp, err := http.Get("https://pomf2.lain.la/f/989dxs36.jpg")
-	if err != nil {
-		panic(err)
-	}
-	defer resp.Body.Close()
-	photo, err := jpeg.Decode(resp.Body)
-	if err != nil {
-		panic(err)
-	}
-	imageView.SetImage(photo)
-
-	// レイアウト用のFlexを作成し、3つのTextViewを追加
-	flex := tview.NewFlex().
-		AddItem(nameView, 0, 1, false).
-		AddItem(messageView, 0, 4, false).
-		AddItem(timeView, 0, 2, false).
-		AddItem(imageView, 0, 1, false)
-
-	// var mu sync.Mutex
-	go func(ctx context.Context) {
-		for ev := range sub.Events {
+	// create in-memory thumbnail storage
+	thumbnails := make(map[string]image.Image)
+	containers := make([]*tview.Flex, 0)
+	// stacking posts on timeline
+	go func() {
+		for i := 0; ; i++ {
 			select {
+			case <-time.NewTicker(1 * time.Second).C:
+				imageView := tview.NewImage()
+				var pic image.Image
+				var ok bool
+				pic, ok = thumbnails["aaa"]
+				if !ok {
+					resp, err := http.Get("https://pomf2.lain.la/f/989dxs36.jpg")
+					if err != nil {
+						panic(err)
+					}
+					defer resp.Body.Close()
+					pic, err = jpeg.Decode(resp.Body)
+					if err != nil {
+						panic(err)
+					}
+					thumbnails["aaa"] = pic
+				}
+				imageView.SetImage(pic)
+				content, err := os.UserConfigDir()
+				if err != nil {
+					panic(err)
+				}
+				newContainer := tview.NewFlex().
+					SetDirection(tview.FlexColumn).
+					AddItem(tview.NewTextView().SetText("added: "+strconv.Itoa(i)), 0, 1, false).
+					AddItem(imageView, 0, 2, false).
+					AddItem(tview.NewTextView().SetText("content: "+content), 0, 6, false).
+					AddItem(tview.NewTextView().SetText(time.Now().Format(time.Stamp)), 0, 1, false)
+
+				containers = append(containers, newContainer)
+				app.QueueUpdateDraw(func() {
+					mainView.Clear()
+					stack(containers, mainView)
+					// mainView.AddItem(newContainer, 4, 0, false)
+					if len(containers) > 10 {
+						containers = containers[1:]
+					}
+				})
 			case <-ctx.Done():
 				return
-			default:
-				app.QueueUpdateDraw(func() {
-					// 現在のテキストを取得
-					nameText := truncate(nameView.GetText(true))
-					messageText := truncate(messageView.GetText(true))
-					timeText := truncate(timeView.GetText(true))
-
-					newText := runewidth.Wrap(fmt.Sprintf(ev.Content), 70)
-					paddingLines := strings.Repeat("\n", len(strings.Split(newText, "\n"))-1)
-
-					// 新しいテキストを設定
-					// mu.Lock()
-					nameView.SetText(fmt.Sprintf("%s\n%s%s", getName(ctx, relay, ev.PubKey), paddingLines, nameText))
-					// mu.Unlock()
-					messageView.SetText(fmt.Sprintf("%s\n%s", newText, messageText))
-					timeView.SetText(fmt.Sprintf("%s\n%s%s", ev.CreatedAt.Time(), paddingLines, timeText))
-					// time.Sleep(1 * time.Second)
-				})
 			}
 		}
-	}(ctx)
+	}()
 
-	if err := app.SetRoot(flex, true).Run(); err != nil {
+	if err := app.SetRoot(mainView, true).Run(); err != nil {
 		panic(err)
 	}
 }
 
-func getName(ctx context.Context, relay *nostr.Relay, pubKey string) string {
-	filters := []nostr.Filter{{
-		Kinds:   []int{nostr.KindProfileMetadata},
-		Authors: []string{pubKey},
-		Limit:   1,
-	}}
-	sub, err := relay.Subscribe(ctx, filters)
-	if err != nil {
-		panic(err)
+func stack(containers []*tview.Flex, view *tview.Flex) {
+	if len(containers) == 0 {
+		return
 	}
-	select {
-	case ev := <-sub.Events:
-		var content metadataContent
-		err = json.Unmarshal([]byte(ev.Content), &content)
-		if err != nil {
-			panic(err)
-		}
-		return content.DispalyName
-	case <-ctx.Done():
-		return ""
-	case <-time.After(2 * time.Second):
-		return ""
+	for i := len(containers) - 1; i > 0; i-- {
+		view.AddItem(containers[i], 4, 0, false)
 	}
-}
-
-func truncate(s string) string {
-	if len(s) > 1001 {
-		return s[:1000]
-	}
-	return s
 }
